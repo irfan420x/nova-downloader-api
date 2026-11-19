@@ -44,28 +44,21 @@ const YT_CLIENT = "TV_SIMPLY";
  * and YouTube may answer "Sign in to confirm you're not a bot" for flagged
  * videos from datacenter IPs.
  *
- * SAPISID cookies are stripped before handing the header to youtubei.js:
- * it derives an `Authorization: SAPISIDHASH ...` header from a SAPISID
- * cookie, and YouTube answers the TV_SIMPLY player request with HTTP 400
- * whenever that header is present (proven locally 2026-11-19: full cookie
- * -> 400 on every video; same cookie minus SAPISID / __Secure-1PAPISID /
- * __Secure-3PAPISID -> 27/31 qualities). The remaining cookies still
- * identify the signed-in session, so the Cookie header alone is sent. */
-const STRIPPED_COOKIES = new Set([
-  "SAPISID",
-  "__Secure-1PAPISID",
-  "__Secure-3PAPISID",
-]);
-
+ * The cookie is passed through UNCHANGED, including SAPISID: youtubei.js
+ * derives an `Authorization: SAPISIDHASH ...` header from it, and that
+ * header is what actually authenticates the Innertube request — a
+ * Cookie-only session is still treated as anonymous and the bot wall
+ * stands (proven live 2026-11-19: stripped cookie -> request OK but
+ * playability UNPLAYABLE "Sign in to confirm you're not a bot").
+ *
+ * The client MUST be set at session level (see getClient): a per-call
+ * `{ client: 'TV_SIMPLY' }` override on a logged-in session makes YouTube
+ * answer the player request with HTTP 400 (proven locally: WEB session +
+ * full cookie + override -> 400; same session without override -> OK;
+ * TV_SIMPLY session + full cookie -> OK). */
 export function getInnertubeOptions() {
   const cookie = (process.env.YT_COOKIE || "").trim();
-  if (!cookie) return {};
-  const kept = cookie
-    .split(";")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .filter((part) => !STRIPPED_COOKIES.has(part.split("=")[0]));
-  return kept.length ? { cookie: kept.join("; ") } : {};
+  return cookie ? { cookie } : {};
 }
 
 let ytClient = null;
@@ -74,7 +67,17 @@ async function getClient() {
   // player's signatureTimestamp YouTube returns a player response with
   // ZERO formats. The session downloads base.js once; deciphering uses
   // our own cached Player (a second base.js download on cold start only).
-  if (!ytClient) ytClient = await Innertube.create(getInnertubeOptions());
+  //
+  // The client is set at SESSION level (client_name), never as a per-call
+  // override on getBasicInfo: a logged-in session + per-call override
+  // makes YouTube 400 the player request (proven locally 2026-11-19),
+  // while a TV_SIMPLY session + full cookie returns playability OK.
+  if (!ytClient) {
+    ytClient = await Innertube.create({
+      ...getInnertubeOptions(),
+      client_name: YT_CLIENT,
+    });
+  }
   return ytClient;
 }
 
@@ -191,7 +194,7 @@ async function lookupFormats(id, dbg) {
   let info;
   try {
     const yt = await getClient();
-    info = await yt.getBasicInfo(id, { client: YT_CLIENT });
+    info = await yt.getBasicInfo(id);
   } catch (err) {
     dbg.attempt("innertube", "https://www.youtube.com/", 0, undefined, Date.now() - lookupStart);
     const message = String(err?.message || err);
