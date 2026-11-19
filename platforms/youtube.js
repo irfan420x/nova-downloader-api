@@ -42,10 +42,30 @@ const YT_CLIENT = "TV_SIMPLY";
  * YT_COOKIE is the user's signed-in youtube.com Cookie header (set as a
  * Vercel env var, never in the repo). Without it Innertube runs anonymous
  * and YouTube may answer "Sign in to confirm you're not a bot" for flagged
- * videos from datacenter IPs. */
+ * videos from datacenter IPs.
+ *
+ * SAPISID cookies are stripped before handing the header to youtubei.js:
+ * it derives an `Authorization: SAPISIDHASH ...` header from a SAPISID
+ * cookie, and YouTube answers the TV_SIMPLY player request with HTTP 400
+ * whenever that header is present (proven locally 2026-11-19: full cookie
+ * -> 400 on every video; same cookie minus SAPISID / __Secure-1PAPISID /
+ * __Secure-3PAPISID -> 27/31 qualities). The remaining cookies still
+ * identify the signed-in session, so the Cookie header alone is sent. */
+const STRIPPED_COOKIES = new Set([
+  "SAPISID",
+  "__Secure-1PAPISID",
+  "__Secure-3PAPISID",
+]);
+
 export function getInnertubeOptions() {
   const cookie = (process.env.YT_COOKIE || "").trim();
-  return cookie ? { cookie } : {};
+  if (!cookie) return {};
+  const kept = cookie
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .filter((part) => !STRIPPED_COOKIES.has(part.split("=")[0]));
+  return kept.length ? { cookie: kept.join("; ") } : {};
 }
 
 let ytClient = null;
