@@ -1,7 +1,7 @@
 // YouTube mapping tests — no network; fake streaming_data shapes.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { extractVideoId, mapYouTubeFormats } from "../platforms/youtube.js";
+import { extractVideoId, getInnertubeOptions, mapYouTubeFormats } from "../platforms/youtube.js";
 
 test("extractVideoId handles every URL form", () => {
   assert.equal(extractVideoId("https://www.youtube.com/watch?v=dQw4w9WgXcQ"), "dQw4w9WgXcQ");
@@ -25,6 +25,19 @@ const STREAMING = {
     { itag: 999, mime_type: 'video/mp4; codecs="avc1.640028"', quality_label: "1080p", height: 1080 }, // no url — undeciphered, must be skipped
   ],
 };
+
+test("getInnertubeOptions passes YT_COOKIE through, empty without it", () => {
+  const prev = process.env.YT_COOKIE;
+  try {
+    delete process.env.YT_COOKIE;
+    assert.deepEqual(getInnertubeOptions(), {});
+    process.env.YT_COOKIE = "  SID=abc; HSID=def  ";
+    assert.deepEqual(getInnertubeOptions(), { cookie: "SID=abc; HSID=def" });
+  } finally {
+    if (prev === undefined) delete process.env.YT_COOKIE;
+    else process.env.YT_COOKIE = prev;
+  }
+});
 
 test("mapYouTubeFormats flags combined / video-only / audio-only", () => {
   const r = mapYouTubeFormats(STREAMING, { title: "Test", thumbnail: [{ url: "https://i.ytimg.com/t.jpg" }] });
