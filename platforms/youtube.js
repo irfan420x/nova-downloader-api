@@ -36,6 +36,25 @@ if (typeof Platform.shim.eval !== "function" || Platform.shim.eval.name === "eva
 // (VideoInfo.js: `item().as(...)` on null).
 const YT_CLIENT = "TV_SIMPLY";
 
+// Clients accepted as a per-call override (youtubei.js SUPPORTED_CLIENTS).
+// TEMPORARY experiment hook (2026-11-19): the request body may carry
+// { "client": "<name>" } to test which client beats YouTube's bot wall
+// from Vercel egress. Remove the hook once the winning default is set.
+export const YT_CLIENTS = [
+  "ANDROID", "IOS", "WEB", "MWEB", "TV", "TV_SIMPLY", "TV_EMBEDDED",
+  "WEB_EMBEDDED", "WEB_CREATOR", "YTMUSIC", "YTKIDS",
+];
+
+export function resolveClient(name) {
+  const c = String(name || "").trim().toUpperCase();
+  return YT_CLIENTS.includes(c) ? c : YT_CLIENT;
+}
+
+// The override value the cached session last used. A logged-in session
+// that switches override clients mid-flight 400s the player request
+// (proven locally 2026-11-19), so a changed client drops the session.
+let lastOverrideClient = null;
+
 // Warm-instance caches: Innertube.create() and Player.create() are slow on
 // a cold start, so a warm serverless instance reuses them for later calls.
 /** Build the Innertube session options from the environment.
@@ -189,15 +208,20 @@ export function mapYouTubeFormats(streamingData, basicInfo) {
  *  Records the attempt and format counts in dbg so a zero-format failure is
  *  diagnosable from the response alone. Throws notFound/upstream on lookup
  *  failure; returns the mapped result (possibly with zero qualities) otherwise. */
-async function lookupFormats(id, dbg) {
+async function lookupFormats(id, dbg, client = YT_CLIENT) {
   const lookupStart = Date.now();
   let info;
   try {
+    if (lastOverrideClient !== null && lastOverrideClient !== client) {
+      ytClient = null;
+      ytPlayer = null;
+    }
     const yt = await getClient();
-    // Per-call TV_SIMPLY override (see getInnertubeOptions): the session
-    // stays WEB and every player call carries the same override, so the
-    // session never switches clients mid-flight.
-    info = await yt.getBasicInfo(id, { client: YT_CLIENT });
+    lastOverrideClient = client;
+    // Per-call override (see getInnertubeOptions): the session stays WEB
+    // and every player call carries the same override, so the session
+    // never switches clients mid-flight.
+    info = await yt.getBasicInfo(id, { client });
   } catch (err) {
     dbg.attempt("innertube", "https://www.youtube.com/", 0, undefined, Date.now() - lookupStart);
     const message = String(err?.message || err);
@@ -232,6 +256,7 @@ async function lookupFormats(id, dbg) {
   );
   const result = mapYouTubeFormats(streamingData, basicInfo);
   dbg.note({
+    client,
     playability,
     playabilityReason: info.playability_status?.reason ?? "",
     cookieConfigured: Boolean(process.env.YT_COOKIE),
@@ -242,11 +267,12 @@ async function lookupFormats(id, dbg) {
   return result;
 }
 
-export async function resolveYouTube(url) {
+export async function resolveYouTube(url, opts = {}) {
   return withDebug("youtube", async (dbg) => {
     const id = extractVideoId(url);
     if (!id) throw notFound("Could not find a video id in this YouTube link");
-    let result = await lookupFormats(id, dbg);
+    const client = resolveClient(opts?.client);
+    let result = await lookupFormats(id, dbg, client);
     if (result.qualities.length === 0) {
       // A warm serverless instance reuses its Innertube session; when
       // YouTube rotates the player the stale session's signatureTimestamp
@@ -256,7 +282,7 @@ export async function resolveYouTube(url) {
       ytClient = null;
       ytPlayer = null;
       dbg.note({ sessionRetried: true });
-      result = await lookupFormats(id, dbg);
+      result = await lookupFormats(id, dbg, client);
     }
     if (result.qualities.length === 0) {
       throw upstream("YouTube returned no downloadable formats for this video");
