@@ -105,7 +105,9 @@ export default async function handler(req, res) {
     const body = await readJsonBody(req);
     const target = requireUrl(body);
     requirePlatform(target, platform);
-    const result = await RESOLVERS[platform](target);
+    // The body is passed through so resolvers can take extra options
+    // (YouTube: { "client": "<Innertube client>" } — experiment hook).
+    const result = await RESOLVERS[platform](target, body);
     sendJson(res, 200, result);
   } catch (err) {
     sendError(res, err);
