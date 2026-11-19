@@ -197,6 +197,7 @@ async function lookupFormats(id, dbg) {
   const result = mapYouTubeFormats(streamingData, basicInfo);
   dbg.note({
     playability,
+    playabilityReason: info.playability_status?.reason ?? "",
     formatsIn: allFormats.length,
     deciphered,
     qualities: result.qualities.length,
