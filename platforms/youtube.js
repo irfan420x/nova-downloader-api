@@ -51,11 +51,15 @@ const YT_CLIENT = "TV_SIMPLY";
  * stands (proven live 2026-11-19: stripped cookie -> request OK but
  * playability UNPLAYABLE "Sign in to confirm you're not a bot").
  *
- * The client MUST be set at session level (see getClient): a per-call
- * `{ client: 'TV_SIMPLY' }` override on a logged-in session makes YouTube
- * answer the player request with HTTP 400 (proven locally: WEB session +
- * full cookie + override -> 400; same session without override -> OK;
- * TV_SIMPLY session + full cookie -> OK). */
+ * The client is set as a per-call `{ client: 'TV_SIMPLY' }` override on
+ * getBasicInfo (see lookupFormats), NOT at session level: a TV_SIMPLY
+ * session returns formats with NO url, NO signature_cipher and NO cipher
+ * at all (proven locally 2026-11-19: 30 formats, all three counts 0),
+ * while the same session's WEB call with the TV_SIMPLY override returns
+ * 31 formats, all with plain googlevideo URLs. The override must be used
+ * on every player call - switching clients mid-session (plain call then
+ * override call on the same logged-in session) 400s the player request
+ * (proven locally 2026-11-19). */
 export function getInnertubeOptions() {
   const cookie = (process.env.YT_COOKIE || "").trim();
   return cookie ? { cookie } : {};
@@ -68,15 +72,11 @@ async function getClient() {
   // ZERO formats. The session downloads base.js once; deciphering uses
   // our own cached Player (a second base.js download on cold start only).
   //
-  // The client is set at SESSION level (client_name), never as a per-call
-  // override on getBasicInfo: a logged-in session + per-call override
-  // makes YouTube 400 the player request (proven locally 2026-11-19),
-  // while a TV_SIMPLY session + full cookie returns playability OK.
+  // Default WEB session. Do NOT set client_name here: a TV_SIMPLY
+  // session returns formats with no url/cipher at all (see above) - the
+  // client only works as a per-call override on getBasicInfo.
   if (!ytClient) {
-    ytClient = await Innertube.create({
-      ...getInnertubeOptions(),
-      client_name: YT_CLIENT,
-    });
+    ytClient = await Innertube.create(getInnertubeOptions());
   }
   return ytClient;
 }
@@ -194,7 +194,10 @@ async function lookupFormats(id, dbg) {
   let info;
   try {
     const yt = await getClient();
-    info = await yt.getBasicInfo(id);
+    // Per-call TV_SIMPLY override (see getInnertubeOptions): the session
+    // stays WEB and every player call carries the same override, so the
+    // session never switches clients mid-flight.
+    info = await yt.getBasicInfo(id, { client: YT_CLIENT });
   } catch (err) {
     dbg.attempt("innertube", "https://www.youtube.com/", 0, undefined, Date.now() - lookupStart);
     const message = String(err?.message || err);
