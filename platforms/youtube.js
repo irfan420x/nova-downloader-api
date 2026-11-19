@@ -152,44 +152,74 @@ export function mapYouTubeFormats(streamingData, basicInfo) {
   };
 }
 
+/** One full Innertube lookup: player response -> decipher -> mapped qualities.
+ *  Records the attempt and format counts in dbg so a zero-format failure is
+ *  diagnosable from the response alone. Throws notFound/upstream on lookup
+ *  failure; returns the mapped result (possibly with zero qualities) otherwise. */
+async function lookupFormats(id, dbg) {
+  const lookupStart = Date.now();
+  let info;
+  try {
+    const yt = await getClient();
+    info = await yt.getBasicInfo(id, { client: YT_CLIENT });
+  } catch (err) {
+    dbg.attempt("innertube", "https://www.youtube.com/", 0, undefined, Date.now() - lookupStart);
+    const message = String(err?.message || err);
+    if (/not found|private|unavailable|deleted/i.test(message)) {
+      throw notFound("YouTube video not found, private, or unavailable");
+    }
+    throw upstream(`YouTube lookup failed: ${message.slice(0, 120)}`);
+  }
+  dbg.attempt("innertube", "https://www.youtube.com/", 200, undefined, Date.now() - lookupStart);
+  const streamingData = info.streaming_data ?? info.streamingData ?? {};
+  const basicInfo = info.basic_info ?? info.basicInfo ?? {};
+  const playability =
+    info.playability_status?.status ?? basicInfo.playability_status ?? "unknown";
+  // Formats arrive ciphered (no usable URL) — decipher every format's
+  // URL with the player script before mapping. Undecipherable formats
+  // are dropped by the mapper (it skips formats without a URL).
+  const player = await getPlayer();
+  const allFormats = [
+    ...(streamingData.formats ?? []),
+    ...(streamingData.adaptiveFormats ?? streamingData.adaptive_formats ?? []),
+  ];
+  let deciphered = 0;
+  await Promise.all(
+    allFormats.map(async (f) => {
+      try {
+        f.url = await f.decipher(player);
+        if (f.url) deciphered += 1;
+      } catch {
+        f.url = f.url || "";
+      }
+    }),
+  );
+  const result = mapYouTubeFormats(streamingData, basicInfo);
+  dbg.note({
+    playability,
+    formatsIn: allFormats.length,
+    deciphered,
+    qualities: result.qualities.length,
+  });
+  return result;
+}
+
 export async function resolveYouTube(url) {
   return withDebug("youtube", async (dbg) => {
     const id = extractVideoId(url);
     if (!id) throw notFound("Could not find a video id in this YouTube link");
-    const lookupStart = Date.now();
-    let info;
-    try {
-      const yt = await getClient();
-      info = await yt.getBasicInfo(id, { client: YT_CLIENT });
-    } catch (err) {
-      dbg.attempt("innertube", "https://www.youtube.com/", 0, undefined, Date.now() - lookupStart);
-      const message = String(err?.message || err);
-      if (/not found|private|unavailable|deleted/i.test(message)) {
-        throw notFound("YouTube video not found, private, or unavailable");
-      }
-      throw upstream(`YouTube lookup failed: ${message.slice(0, 120)}`);
+    let result = await lookupFormats(id, dbg);
+    if (result.qualities.length === 0) {
+      // A warm serverless instance reuses its Innertube session; when
+      // YouTube rotates the player the stale session's signatureTimestamp
+      // yields a player response with ZERO formats (the same video returns
+      // 31 formats on a fresh session). Drop the cached session + player
+      // and retry once before giving up.
+      ytClient = null;
+      ytPlayer = null;
+      dbg.note({ sessionRetried: true });
+      result = await lookupFormats(id, dbg);
     }
-    dbg.attempt("innertube", "https://www.youtube.com/", 200, undefined, Date.now() - lookupStart);
-    const streamingData = info.streaming_data ?? info.streamingData ?? {};
-    const basicInfo = info.basic_info ?? info.basicInfo ?? {};
-    // Formats arrive ciphered (no usable URL) — decipher every format's
-    // URL with the player script before mapping. Undecipherable formats
-    // are dropped by the mapper (it skips formats without a URL).
-    const player = await getPlayer();
-    const allFormats = [
-      ...(streamingData.formats ?? []),
-      ...(streamingData.adaptiveFormats ?? streamingData.adaptive_formats ?? []),
-    ];
-    await Promise.all(
-      allFormats.map(async (f) => {
-        try {
-          f.url = await f.decipher(player);
-        } catch {
-          f.url = f.url || "";
-        }
-      }),
-    );
-    const result = mapYouTubeFormats(streamingData, basicInfo);
     if (result.qualities.length === 0) {
       throw upstream("YouTube returned no downloadable formats for this video");
     }
