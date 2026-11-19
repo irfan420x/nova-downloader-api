@@ -1,7 +1,7 @@
 // YouTube mapping tests — no network; fake streaming_data shapes.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { extractVideoId, getInnertubeOptions, mapYouTubeFormats } from "../platforms/youtube.js";
+import { extractVideoId, getInnertubeOptions, mapYouTubeFormats, resolveClient } from "../platforms/youtube.js";
 
 test("extractVideoId handles every URL form", () => {
   assert.equal(extractVideoId("https://www.youtube.com/watch?v=dQw4w9WgXcQ"), "dQw4w9WgXcQ");
@@ -76,4 +76,12 @@ test("mapYouTubeFormats flags combined / video-only / audio-only", () => {
   assert.equal(audio.find((q) => q.id === "yt-140").ext, "mp4");
   assert.equal(audio.find((q) => q.id === "yt-251").ext, "webm");
   assert.match(audio.find((q) => q.id === "yt-140").label, /audio 128k/);
+});
+
+test("resolveClient defaults to TV_SIMPLY and rejects unknown clients", () => {
+  assert.equal(resolveClient(), "TV_SIMPLY");
+  assert.equal(resolveClient(""), "TV_SIMPLY");
+  assert.equal(resolveClient("android"), "ANDROID");
+  assert.equal(resolveClient("WEB_EMBEDDED"), "WEB_EMBEDDED");
+  assert.equal(resolveClient("BOGUS"), "TV_SIMPLY");
 });
