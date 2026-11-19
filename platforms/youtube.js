@@ -38,13 +38,23 @@ const YT_CLIENT = "TV_SIMPLY";
 
 // Warm-instance caches: Innertube.create() and Player.create() are slow on
 // a cold start, so a warm serverless instance reuses them for later calls.
+/** Build the Innertube session options from the environment.
+ * YT_COOKIE is the user's signed-in youtube.com Cookie header (set as a
+ * Vercel env var, never in the repo). Without it Innertube runs anonymous
+ * and YouTube may answer "Sign in to confirm you're not a bot" for flagged
+ * videos from datacenter IPs. */
+export function getInnertubeOptions() {
+  const cookie = (process.env.YT_COOKIE || "").trim();
+  return cookie ? { cookie } : {};
+}
+
 let ytClient = null;
 async function getClient() {
   // NOTE: retrieve_player:false is NOT an option — without the session
   // player's signatureTimestamp YouTube returns a player response with
   // ZERO formats. The session downloads base.js once; deciphering uses
   // our own cached Player (a second base.js download on cold start only).
-  if (!ytClient) ytClient = await Innertube.create();
+  if (!ytClient) ytClient = await Innertube.create(getInnertubeOptions());
   return ytClient;
 }
 
@@ -198,6 +208,7 @@ async function lookupFormats(id, dbg) {
   dbg.note({
     playability,
     playabilityReason: info.playability_status?.reason ?? "",
+    cookieConfigured: Boolean(process.env.YT_COOKIE),
     formatsIn: allFormats.length,
     deciphered,
     qualities: result.qualities.length,
