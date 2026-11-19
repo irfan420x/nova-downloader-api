@@ -41,6 +41,21 @@ test("GET /api/health returns { ok: true }", async () => {
   assert.deepEqual(res.body, { ok: true });
 });
 
+test("HEAD /api/health returns 200 with no body (uptime monitors probe with HEAD)", async () => {
+  const res = fakeRes();
+  await handler(req("HEAD", "/api/health"), res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.ended, true);
+  assert.equal(res.body, undefined);
+});
+
+test("POST /api/health is still 405", async () => {
+  const res = fakeRes();
+  await handler(req("POST", "/api/health", {}), res);
+  assert.equal(res.statusCode, 405);
+  assert.equal(res.body.error.code, "UNSUPPORTED");
+});
+
 test("GET / lists the endpoints", async () => {
   const res = fakeRes();
   await handler(req("GET", "/"), res);

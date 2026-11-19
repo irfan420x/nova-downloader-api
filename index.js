@@ -66,6 +66,12 @@ export default async function handler(req, res) {
   // Vercel rewrites pass ?platform=<name>; standalone uses the clean path.
   const platform = req.query?.platform || platformFromPath(url.pathname);
   if (platform === "health") {
+    // HEAD must answer 200 with no body: uptime monitors (UptimeRobot)
+    // probe /api/health with HEAD, and a 405 there reads as "down".
+    if (req.method === "HEAD") {
+      res.status(200).end();
+      return;
+    }
     if (req.method !== "GET") {
       sendJson(res, 405, { error: { code: "UNSUPPORTED", message: "GET only for /api/health." } });
       return;
