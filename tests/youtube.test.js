@@ -39,6 +39,20 @@ test("getInnertubeOptions passes YT_COOKIE through, empty without it", () => {
   }
 });
 
+test("getInnertubeOptions strips SAPISID cookies (SAPISIDHASH 400s the player request)", () => {
+  const prev = process.env.YT_COOKIE;
+  try {
+    process.env.YT_COOKIE =
+      "SID=abc; SAPISID=bad; __Secure-1PAPISID=bad; __Secure-3PAPISID=bad; HSID=def";
+    assert.deepEqual(getInnertubeOptions(), { cookie: "SID=abc; HSID=def" });
+    process.env.YT_COOKIE = "SAPISID=only";
+    assert.deepEqual(getInnertubeOptions(), {});
+  } finally {
+    if (prev === undefined) delete process.env.YT_COOKIE;
+    else process.env.YT_COOKIE = prev;
+  }
+});
+
 test("mapYouTubeFormats flags combined / video-only / audio-only", () => {
   const r = mapYouTubeFormats(STREAMING, { title: "Test", thumbnail: [{ url: "https://i.ytimg.com/t.jpg" }] });
   assert.equal(r.source, "youtube");
