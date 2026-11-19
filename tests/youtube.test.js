@@ -39,14 +39,19 @@ test("getInnertubeOptions passes YT_COOKIE through, empty without it", () => {
   }
 });
 
-test("getInnertubeOptions strips SAPISID cookies (SAPISIDHASH 400s the player request)", () => {
+test("getInnertubeOptions passes YT_COOKIE through unchanged, SAPISID included", () => {
   const prev = process.env.YT_COOKIE;
   try {
     process.env.YT_COOKIE =
-      "SID=abc; SAPISID=bad; __Secure-1PAPISID=bad; __Secure-3PAPISID=bad; HSID=def";
-    assert.deepEqual(getInnertubeOptions(), { cookie: "SID=abc; HSID=def" });
-    process.env.YT_COOKIE = "SAPISID=only";
-    assert.deepEqual(getInnertubeOptions(), {});
+      "SID=abc; SAPISID=xyz; __Secure-1PAPISID=xyz; HSID=def";
+    // SAPISID must stay: youtubei.js derives the SAPISIDHASH Authorization
+    // header from it, and that header is what authenticates the request.
+    // (A stripped cookie still hits the "Sign in to confirm you're not a
+    // bot" wall live; the per-call client override was the 400 cause, and
+    // the session-level client in getClient is the fix for that.)
+    assert.deepEqual(getInnertubeOptions(), {
+      cookie: "SID=abc; SAPISID=xyz; __Secure-1PAPISID=xyz; HSID=def",
+    });
   } finally {
     if (prev === undefined) delete process.env.YT_COOKIE;
     else process.env.YT_COOKIE = prev;
